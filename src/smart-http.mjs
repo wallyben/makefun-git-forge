@@ -120,19 +120,35 @@ export function writePack(ids,objects){
  return Buffer.concat([payload,createHash('sha1').update(payload).digest()]);
 }
 export function discoverRefs(repo,service){
- const head=repo.refs.get('refs/heads/main')||'0'.repeat(40);
- return Buffer.concat([
- pkt('# service='+service+'\n'),flush(),
- pkt(head+' HEAD\0multi_ack thin-pack side-band side-band-64k ofs-delta agent=git-forge/0.2\n'),
- pkt(head+' refs/heads/main\n'),flush()
- ]);
+ const main=repo.refs.get('refs/heads/main');
+ const refs=[...repo.refs].sort(([a],[b])=>a.localeCompare(b));
+ const caps='report-status report-status-v2 delete-refs ofs-delta side-band-64k agent=git-forge/0.3';
+ const rows=[pkt('# service='+service+'\n'),flush()];
+ if(!refs.length){
+  rows.push(pkt('0'.repeat(40)+' capabilities^{}\\0'+caps+'\n'));
+ }else{
+  const [firstName,firstId]=refs[0];
+  rows.push(pkt(firstId+' '+firstName+'\\0'+caps+'\n'));
+  for(const [name,id] of refs.slice(1))rows.push(pkt(id+' '+name+'\n'));
+  rows.push(pkt((main||firstId)+' HEAD\n'));
+ }
+ return Buffer.concat([...rows,flush()]);
 }
 export function advertiseV2(){
- return Buffer.concat([pkt('version 2\n'),pkt('agent=git-forge/0.2\n'),pkt('ls-refs\n'),pkt('fetch=shallow\n'),flush()]);
+ return Buffer.concat([pkt('version 2\n'),pkt('agent=git-forge/0.3\n'),pkt('ls-refs\n'),pkt('fetch=shallow wait-for-done\n'),flush()]);
 }
-export function lsRefs(repo){
+export function lsRefs(repo,request=[]){
+ const lines=request.filter(x=>Buffer.isBuffer(x)).map(x=>x.toString('utf8').trim());
+ const prefixes=lines.filter(x=>x.startsWith('ref-prefix ')).map(x=>x.slice(11));
+ const symrefs=lines.includes('symrefs');
+ const main=repo.refs.get('refs/heads/main');
  const rows=[];
- for(const [name,id] of repo.refs)rows.push(pkt(id+' '+name+'\n'));
+ if(main&&(!prefixes.length||prefixes.some(p=>'HEAD'.startsWith(p))))
+  rows.push(pkt(main+' HEAD'+(symrefs?' symref-target:refs/heads/main':'')+'\n'));
+ for(const [name,id] of [...repo.refs].sort(([a],[b])=>a.localeCompare(b))){
+  if(prefixes.length&&!prefixes.some(p=>name.startsWith(p)))continue;
+  rows.push(pkt(id+' '+name+'\n'));
+ }
  return Buffer.concat([...rows,flush()]);
 }
 
