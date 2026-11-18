@@ -1,8 +1,10 @@
+import {pkt,flush,packets,readPack,writePack,discoverRefs,advertiseV2,lsRefs} from './src/smart-http.mjs';
 import http from 'node:http';
 import {randomUUID,createHash} from 'node:crypto';
 const token=process.env.MAKEFUN_SHOP_TOKEN||'';
 const env=process.env.MAKEFUN_ENV_URL;
 const repos=new Map();
+const gitRepos=new Map();
 const owner=process.env.MAKEFUN_LOGIN||'agent';
 const sha=x=>createHash('sha1').update(x).digest('hex');
 const json=(res,status,data,headers={})=>{res.writeHead(status,{'Content-Type':'application/json','X-GitHub-Request-Id':randomUUID(),...headers});res.end(status===204?'':JSON.stringify(data))};
@@ -13,6 +15,62 @@ const issueObj=(r,i)=>({id:i.id,number:i.number,title:i.title,body:i.body,state:
 const server=http.createServer(async(req,res)=>{
  try{
  const url=new URL(req.url,'http://localhost');const p=url.pathname;
+ if(/^\\/[^/]+\\/[^/]+\\.git\\/(info\\/refs|git-upload-pack|git-receive-pack)$/.test(p)){
+  const m=/^\\/([^/]+)\\/([^/]+)\\.git\\/(info\\/refs|git-upload-pack|git-receive-pack)$/.exec(p);
+  const key=decodeURIComponent(m[1])+'/'+decodeURIComponent(m[2]);
+  const gr=gitRepos.get(key);
+  if(!gr)return fail(res,404,'Repository not found');
+  const route=m[3],service=url.searchParams.get('service');
+  if(route==='info/refs'){
+   if(!['git-upload-pack','git-receive-pack'].includes(service))return fail(res,400,'Unsupported service');
+   const v2=/version=2/.test(req.headers['git-protocol']||'');
+   res.writeHead(200,{'Content-Type':'application/x-'+service+'-advertisement','Cache-Control':'no-cache'});
+   return res.end(v2?advertiseV2():discoverRefs(gr,service));
+  }
+  if(req.method!=='POST')return fail(res,405,'Method not allowed');
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  const input=Buffer.concat(chunks);
+  if(route==='git-upload-pack'){
+   const lines=packets(input);
+   const cmd=lines.find(x=>x&&x.toString().startsWith('command='));
+   if(cmd&&cmd.toString().startsWith('command=ls-refs')){
+    res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
+    return res.end(lsRefs(gr));
+   }
+   if(cmd&&cmd.toString().startsWith('command=fetch')){
+    const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
+    const objects=wants.filter(x=>gr.objects.has(x));
+    const result=Buffer.concat([pkt('acknowledgments\\n'),flush(),pkt('packfile\\n'),Buffer.from([1]),writePack(objects,gr.objects)]);
+    res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
+    return res.end(result);
+   }
+   const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
+   const result=Buffer.concat([Buffer.from('0008NAK\\n'),writePack(wants.filter(x=>gr.objects.has(x)),gr.objects)]);
+   res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
+   return res.end(result);
+  }
+  if(route==='git-receive-pack'){
+   const zero=input.indexOf(Buffer.from('0000'));
+   if(zero<0)return fail(res,400,'Missing commands');
+   const commands=packets(input.subarray(0,zero+4));
+   const pack=input.subarray(zero+4);
+   try{
+    if(pack.length)readPack(pack,gr.objects);
+    for(const line of commands){
+     if(!line)continue;
+     const raw=line.toString().split('\\0')[0].trim();
+     const match=/^([a-f0-9]{40}) ([a-f0-9]{40}) (refs\\/heads\\/[\\w./-]+)$/.exec(raw);
+     if(!match)continue;
+     const [,oldId,newId,ref]=match;
+     const existing=gr.refs.get(ref)||'0'.repeat(40);
+     if(oldId!==existing)throw Error('Non-fast-forward reference mismatch');
+     if(newId==='0'.repeat(40))gr.refs.delete(ref);else gr.refs.set(ref,newId);
+    }
+    res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});
+    return res.end(Buffer.concat([pkt('unpack ok\\n'),pkt('ok refs/heads/main\\n'),flush()]));
+   }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\\n'),flush()]))}
+  }
+ }
  if(!p.startsWith('/api/')&&!p.startsWith('/mcp'))return fail(res,404,'Not Found');
  if(token&&req.headers.authorization!=='Bearer '+token)return fail(res,401,'Bad credentials');
  if(p==='/api/v3/'&&req.method==='GET')return json(res,200,{current_user_url:'/api/v3/user'}, {'X-OAuth-Scopes':'repo'});
@@ -20,7 +78,7 @@ const server=http.createServer(async(req,res)=>{
  if(p==='/api/v3/user'&&req.method==='GET')return json(res,200,{login:owner,id:1});
  if(p==='/api/v3/user/repos'){
   if(req.method==='GET'){const list=[...repos.values()].map(repoObj);const page=Math.max(1,Number(url.searchParams.get('page'))||1),per=Math.min(100,Math.max(1,Number(url.searchParams.get('per_page'))||30));const start=(page-1)*per;const headers={};if(start+per<list.length)headers.Link='<'+url.origin+p+'?page='+(page+1)+'&per_page='+per+'>; rel="next"';return json(res,200,list.slice(start,start+per),headers)}
-  if(req.method==='POST'){const b=await body(req);if(typeof b.name!=='string'||!/^[\w.-]+$/.test(b.name))return fail(res,422,'Invalid name');const key=owner+'/'+b.name;if(repos.has(key))return fail(res,422,'Repository exists');const r={id:repos.size+1,name:b.name,owner,description:b.description||'',issues:[],pulls:[],labels:new Set(),files:new Map()};repos.set(key,r);return json(res,201,repoObj(r))}
+  if(req.method==='POST'){const b=await body(req);if(typeof b.name!=='string'||!/^[\w.-]+$/.test(b.name))return fail(res,422,'Invalid name');const key=owner+'/'+b.name;if(repos.has(key))return fail(res,422,'Repository exists');const r={id:repos.size+1,name:b.name,owner,description:b.description||'',issues:[],pulls:[],labels:new Set(),files:new Map()};repos.set(key,r);gitRepos.set(key,{refs:new Map(),objects:new Map()});return json(res,201,repoObj(r))}
  }
  const m=/^\/api\/v3\/repos\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(p);
  if(m){
@@ -30,7 +88,7 @@ const server=http.createServer(async(req,res)=>{
  if(!sub){
   if(req.method==='GET')return json(res,200,repoObj(r));
   if(req.method==='PATCH'){const b=await body(req);if(typeof b.description==='string')r.description=b.description;return json(res,200,repoObj(r))}
-  if(req.method==='DELETE'){repos.delete(key);return json(res,204,null)}
+  if(req.method==='DELETE'){repos.delete(key);gitRepos.delete(key);return json(res,204,null)}
  }
  if(sub==='labels'&&req.method==='POST'){const b=await body(req);if(!b.name)return fail(res,422,'Name required');r.labels.add(b.name);return json(res,201,{name:b.name})}
  if(sub==='issues'){
