@@ -21,28 +21,89 @@ export function packets(buffer){
  return out;
 }
 const TYPES={1:'commit',2:'tree',3:'blob',4:'tag'};
+function deltaVarint(data,offset){
+ let value=0,shift=0,b;
+ do{
+  if(offset>=data.length||shift>49)throw Error('Invalid delta varint');
+  b=data[offset++];value+=(b&127)*2**shift;shift+=7;
+ }while(b&128);
+ return [value,offset];
+}
+export function applyDelta(base,delta){
+ let pos=0;let baseSize,outSize;
+ [baseSize,pos]=deltaVarint(delta,pos);[outSize,pos]=deltaVarint(delta,pos);
+ if(baseSize!==base.length)throw Error('Delta base size mismatch');
+ if(!Number.isSafeInteger(outSize)||outSize>64*1024*1024)throw Error('Delta output too large');
+ const out=Buffer.alloc(outSize);let dest=0;
+ while(pos<delta.length){
+  const cmd=delta[pos++];
+  if(cmd&128){
+   let offset=0,length=0;
+   for(let i=0;i<4;i++)if(cmd&(1<<i)){if(pos>=delta.length)throw Error('Truncated delta copy offset');offset+=delta[pos++]*2**(8*i)}
+   for(let i=0;i<3;i++)if(cmd&(1<<(i+4))){if(pos>=delta.length)throw Error('Truncated delta copy length');length+=delta[pos++]*2**(8*i)}
+   if(length===0)length=65536;
+   if(offset+length>base.length||dest+length>out.length)throw Error('Delta copy out of bounds');
+   base.copy(out,dest,offset,offset+length);dest+=length;
+  }else if(cmd){
+   if(pos+cmd>delta.length||dest+cmd>out.length)throw Error('Delta insert out of bounds');
+   delta.copy(out,dest,pos,pos+cmd);pos+=cmd;dest+=cmd;
+  }else throw Error('Invalid delta opcode');
+ }
+ if(dest!==outSize)throw Error('Delta output size mismatch');
+ return out;
+}
 export function readPack(input,objects){
- if(input.toString('ascii',0,4)!=='PACK')throw Error('Missing PACK header');
+ if(input.length<32||input.toString('ascii',0,4)!=='PACK')throw Error('Missing PACK header');
  if(input.readUInt32BE(4)!==2&&input.readUInt32BE(4)!==3)throw Error('Unsupported PACK version');
  const count=input.readUInt32BE(8);
  const checksum=createHash('sha1').update(input.subarray(0,input.length-20)).digest();
  if(!checksum.equals(input.subarray(input.length-20)))throw Error('Invalid PACK checksum');
- let pos=12;const unpacked=[];
+ let pos=12;const entries=[],resolved=new Map(objects);
+ const readOffset=()=>{
+  if(pos>=input.length-20)throw Error('Truncated PACK');
+  return input[pos++];
+ };
  for(let i=0;i<count;i++){
-  let c=input[pos++],type=(c>>4)&7,size=c&15,shift=4;
-  while(c&128){c=input[pos++];size|=(c&127)*2**shift;shift+=7}
-  if(type===6||type===7)throw Error('Delta objects not yet supported');
-  if(!TYPES[type])throw Error('Unsupported object type '+type);
-  const result=inflateSync(input.subarray(pos,input.length-20),{info:true});
-  const data=result.buffer;
-  if(data.length!==size)throw Error('Object size mismatch');
-  pos+=result.engine.bytesWritten;
-  const name=TYPES[type],id=oid(name,data);
-  unpacked.push([id,{type:name,data}]);
+  const start=pos;
+  let c=readOffset(),type=(c>>4)&7,size=c&15,shift=4;
+  while(c&128){c=readOffset();size+=(c&127)*2**shift;shift+=7;if(shift>49)throw Error('Object size too large')}
+  if(!Number.isSafeInteger(size)||size>64*1024*1024)throw Error('Object too large');
+  let baseId=null,baseOffset=null;
+  if(type===6){
+   let b=readOffset(),distance=b&127;
+   while(b&128){b=readOffset();distance=((distance+1)*128)+(b&127)}
+   baseOffset=start-distance;
+   if(baseOffset<12)throw Error('Invalid OFS_DELTA offset');
+  }else if(type===7){
+   if(pos+20>input.length-20)throw Error('Truncated REF_DELTA base');
+   baseId=input.subarray(pos,pos+20).toString('hex');pos+=20;
+  }else if(!TYPES[type])throw Error('Unsupported object type '+type);
+  const inflated=inflateSync(input.subarray(pos,input.length-20),{info:true});
+  pos+=inflated.engine.bytesWritten;
+  if(inflated.buffer.length!==size)throw Error('Object size mismatch');
+  entries.push({start,type,data:inflated.buffer,baseId,baseOffset});
  }
  if(pos!==input.length-20)throw Error('Trailing PACK data');
- for(const [id,obj] of unpacked)objects.set(id,obj);
- return unpacked.map(([id])=>id);
+ const byOffset=new Map();const pending=new Set(entries);
+ for(let attempt=0;pending.size&&attempt<=entries.length;attempt++){
+  let progressed=false;
+  for(const entry of [...pending]){
+   let object;
+   if(TYPES[entry.type])object={type:TYPES[entry.type],data:entry.data};
+   else{
+    const base=entry.type===6?byOffset.get(entry.baseOffset):resolved.get(entry.baseId);
+    if(!base)continue;
+    object={type:base.type,data:applyDelta(base.data,entry.data)};
+   }
+   const id=oid(object.type,object.data);
+   entry.id=id;entry.object=object;resolved.set(id,object);byOffset.set(entry.start,object);
+   pending.delete(entry);progressed=true;
+  }
+  if(!progressed)break;
+ }
+ if(pending.size)throw Error('Unresolved delta base');
+ for(const entry of entries)objects.set(entry.id,entry.object);
+ return entries.map(entry=>entry.id);
 }
 export function writePack(ids,objects){
  const chunks=[Buffer.alloc(12)];chunks[0].write('PACK',0);chunks[0].writeUInt32BE(2,4);chunks[0].writeUInt32BE(ids.length,8);
