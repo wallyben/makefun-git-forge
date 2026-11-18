@@ -2,7 +2,7 @@ import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import assert from 'node:assert/strict';
-import {oid,pkt,flush,packets,readPack,writePack,advertiseV2,lsRefs} from '../src/smart-http.mjs';
+import {oid,pkt,flush,packets,readPack,writePack,advertiseV2,lsRefs,reachableObjects,applyRefUpdates} from '../src/smart-http.mjs';
 test('packet framing and flush roundtrip',()=>{
  const data=Buffer.concat([pkt('hello\n'),flush(),pkt('world\n')]);
  assert.deepEqual(packets(data).map(x=>x===null?null:x.toString()),['hello\n',null,'world\n']);
@@ -61,4 +61,30 @@ test('OFS_DELTA resolves a preceding base object in the same pack',()=>{
  const ids=readPack(pack,objects);
  assert.equal(ids[0],baseId);
  assert.equal(objects.get(ids[1]).data.toString(),'hello planet');
+});
+
+test('reachableObjects includes commit, tree and blob, excluding submodule commits',()=>{
+ const objects=new Map();
+ const blob=Buffer.from('content');const blobId=oid('blob',blob);objects.set(blobId,{type:'blob',data:blob});
+ const tree=Buffer.concat([Buffer.from('100644 file.txt\\0'),Buffer.from(blobId,'hex')]);
+ const treeId=oid('tree',tree);objects.set(treeId,{type:'tree',data:tree});
+ const commit=Buffer.from('tree '+treeId+'\\nauthor Test <test@example.com> 0 +0000\\ncommitter Test <test@example.com> 0 +0000\\n\\nmessage\\n');
+ const commitId=oid('commit',commit);objects.set(commitId,{type:'commit',data:commit});
+ assert.deepEqual(new Set(reachableObjects([commitId],objects)),new Set([commitId,treeId,blobId]));
+ assert.throws(()=>reachableObjects(['0'.repeat(40)],objects),/Unknown wanted/);
+});
+test('ref updates reject missing objects and stale refs without partially mutating',()=>{
+ const data=Buffer.from('content'),id=oid('blob',data),zero='0'.repeat(40);
+ const objects=new Map([[id,{type:'blob',data}]]);
+ const repo={refs:new Map()};
+ assert.deepEqual(applyRefUpdates(repo,[Buffer.from(zero+' '+id+' refs/heads/main')],objects),['refs/heads/main']);
+ assert.equal(repo.refs.get('refs/heads/main'),id);
+ const other=oid('blob',Buffer.from('missing'));
+ assert.throws(()=>applyRefUpdates(repo,[
+  Buffer.from(id+' '+zero+' refs/heads/main'),
+  Buffer.from(zero+' '+other+' refs/heads/other')
+ ],objects),/Missing target/);
+ assert.equal(repo.refs.get('refs/heads/main'),id);
+ assert.throws(()=>applyRefUpdates(repo,[Buffer.from(zero+' '+zero+' refs/heads/main')],objects),/Stale reference/);
+ assert.throws(()=>applyRefUpdates(repo,[Buffer.from(id+' '+zero+' refs/heads/../bad')],objects),/Invalid or duplicate/);
 });
