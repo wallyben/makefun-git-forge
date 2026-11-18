@@ -1,0 +1,1 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {safeRepoPath} from '../src/git.mjs';test('repository names are constrained',()=>{assert.match(safeRepoPath('/tmp/forge','example'),/example.git$/);for(const n of ['../bad','a/b','.','..',''])assert.throws(()=>safeRepoPath('/tmp/forge',n))})
