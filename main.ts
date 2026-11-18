@@ -15,8 +15,8 @@ const issueObj=(r,i)=>({id:i.id,number:i.number,title:i.title,body:i.body,state:
 const server=http.createServer(async(req,res)=>{
  try{
  const url=new URL(req.url,'http://localhost');const p=url.pathname;
- if(/^\\/[^/]+\\/[^/]+\\.git\\/(info\\/refs|git-upload-pack|git-receive-pack)$/.test(p)){
-  const m=/^\\/([^/]+)\\/([^/]+)\\.git\\/(info\\/refs|git-upload-pack|git-receive-pack)$/.exec(p);
+ if(/^\/[^/]+\/[^/]+\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.test(p)){
+  const m=/^\/([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(p);
   const key=decodeURIComponent(m[1])+'/'+decodeURIComponent(m[2]);
   const gr=gitRepos.get(key);
   if(!gr)return fail(res,404,'Repository not found');
@@ -40,12 +40,12 @@ const server=http.createServer(async(req,res)=>{
    if(cmd&&cmd.toString().startsWith('command=fetch')){
     const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
     const objects=wants.filter(x=>gr.objects.has(x));
-    const result=Buffer.concat([pkt('acknowledgments\\n'),flush(),pkt('packfile\\n'),Buffer.from([1]),writePack(objects,gr.objects)]);
+    const result=Buffer.concat([pkt('acknowledgments\n'),flush(),pkt('packfile\n'),Buffer.from([1]),writePack(objects,gr.objects)]);
     res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
     return res.end(result);
    }
    const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
-   const result=Buffer.concat([Buffer.from('0008NAK\\n'),writePack(wants.filter(x=>gr.objects.has(x)),gr.objects)]);
+   const result=Buffer.concat([Buffer.from('0008NAK\n'),writePack(wants.filter(x=>gr.objects.has(x)),gr.objects)]);
    res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
    return res.end(result);
   }
@@ -58,8 +58,8 @@ const server=http.createServer(async(req,res)=>{
     if(pack.length)readPack(pack,gr.objects);
     for(const line of commands){
      if(!line)continue;
-     const raw=line.toString().split('\\0')[0].trim();
-     const match=/^([a-f0-9]{40}) ([a-f0-9]{40}) (refs\\/heads\\/[\\w./-]+)$/.exec(raw);
+     const raw=line.toString().split('\0')[0].trim();
+     const match=/^([a-f0-9]{40}) ([a-f0-9]{40}) (refs\/heads\/[\w./-]+)$/.exec(raw);
      if(!match)continue;
      const [,oldId,newId,ref]=match;
      const existing=gr.refs.get(ref)||'0'.repeat(40);
@@ -67,8 +67,8 @@ const server=http.createServer(async(req,res)=>{
      if(newId==='0'.repeat(40))gr.refs.delete(ref);else gr.refs.set(ref,newId);
     }
     res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});
-    return res.end(Buffer.concat([pkt('unpack ok\\n'),pkt('ok refs/heads/main\\n'),flush()]));
-   }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\\n'),flush()]))}
+    return res.end(Buffer.concat([pkt('unpack ok\n'),pkt('ok refs/heads/main\n'),flush()]));
+   }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\n'),flush()]))}
   }
  }
  if(!p.startsWith('/api/')&&!p.startsWith('/mcp'))return fail(res,404,'Not Found');
