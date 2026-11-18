@@ -1,4 +1,4 @@
-import {pkt,flush,packets,readPack,writePack,discoverRefs,advertiseV2,lsRefs} from './src/smart-http.mjs';
+import {pkt,flush,packets,readPack,writePack,discoverRefs,advertiseV2,lsRefs,reachableObjects,applyRefUpdates} from './src/smart-http.mjs';
 import http from 'node:http';
 import {randomUUID,createHash} from 'node:crypto';
 const token=process.env.MAKEFUN_SHOP_TOKEN||'';
@@ -39,13 +39,13 @@ const server=http.createServer(async(req,res)=>{
    }
    if(cmd&&cmd.toString().startsWith('command=fetch')){
     const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
-    const objects=wants.filter(x=>gr.objects.has(x));
+    const objects=reachableObjects(wants,gr.objects);
     const result=Buffer.concat([pkt('acknowledgments\n'),flush(),pkt('packfile\n'),Buffer.from([1]),writePack(objects,gr.objects)]);
     res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
     return res.end(result);
    }
    const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
-   const result=Buffer.concat([Buffer.from('0008NAK\n'),writePack(wants.filter(x=>gr.objects.has(x)),gr.objects)]);
+   const result=Buffer.concat([Buffer.from('0008NAK\n'),writePack(reachableObjects(wants,gr.objects),gr.objects)]);
    res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
    return res.end(result);
   }
@@ -56,18 +56,9 @@ const server=http.createServer(async(req,res)=>{
    const pack=input.subarray(zero+4);
    try{
     if(pack.length)readPack(pack,gr.objects);
-    for(const line of commands){
-     if(!line)continue;
-     const raw=line.toString().split('\0')[0].trim();
-     const match=/^([a-f0-9]{40}) ([a-f0-9]{40}) (refs\/heads\/[\w./-]+)$/.exec(raw);
-     if(!match)continue;
-     const [,oldId,newId,ref]=match;
-     const existing=gr.refs.get(ref)||'0'.repeat(40);
-     if(oldId!==existing)throw Error('Non-fast-forward reference mismatch');
-     if(newId==='0'.repeat(40))gr.refs.delete(ref);else gr.refs.set(ref,newId);
-    }
+    const updated=applyRefUpdates(gr,commands,gr.objects);
     res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});
-    return res.end(Buffer.concat([pkt('unpack ok\n'),pkt('ok refs/heads/main\n'),flush()]));
+    return res.end(Buffer.concat([pkt('unpack ok\n'),...updated.map(ref=>pkt('ok '+ref+'\n')),flush()]));
    }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\n'),flush()]))}
   }
  }
