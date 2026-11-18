@@ -35,12 +35,14 @@ const server=http.createServer(async(req,res)=>{
    const cmd=lines.find(x=>x&&x.toString().startsWith('command='));
    if(cmd&&cmd.toString().startsWith('command=ls-refs')){
     res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
-    return res.end(lsRefs(gr));
+    return res.end(lsRefs(gr,lines));
    }
    if(cmd&&cmd.toString().startsWith('command=fetch')){
     const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
     const objects=reachableObjects(wants,gr.objects);
-    const result=Buffer.concat([pkt('acknowledgments\n'),flush(),pkt('packfile\n'),Buffer.from([1]),writePack(objects,gr.objects)]);
+    const packed=writePack(objects,gr.objects);
+    const bands=[];for(let i=0;i<packed.length;i+=65515)bands.push(pkt(Buffer.concat([Buffer.from([1]),packed.subarray(i,i+65515)])));
+    const result=Buffer.concat([pkt('acknowledgments\n'),Buffer.from('0001'),pkt('packfile\n'),...bands,flush()]);
     res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
     return res.end(result);
    }
@@ -55,8 +57,10 @@ const server=http.createServer(async(req,res)=>{
    const commands=packets(input.subarray(0,zero+4));
    const pack=input.subarray(zero+4);
    try{
-    if(pack.length)readPack(pack,gr.objects);
-    const updated=applyRefUpdates(gr,commands,gr.objects);
+    const staged=new Map(gr.objects);
+    if(pack.length)readPack(pack,staged);
+    const updated=applyRefUpdates(gr,commands,staged);
+    gr.objects=staged;
     res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});
     return res.end(Buffer.concat([pkt('unpack ok\n'),...updated.map(ref=>pkt('ok '+ref+'\n')),flush()]));
    }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\n'),flush()]))}
