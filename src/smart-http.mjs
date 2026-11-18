@@ -135,3 +135,58 @@ export function lsRefs(repo){
  for(const [name,id] of repo.refs)rows.push(pkt(id+' '+name+'\n'));
  return Buffer.concat([...rows,flush()]);
 }
+
+/** Resolve the full object graph needed for a fetch, including commit parents and trees. */
+export function reachableObjects(wants,objects){
+ const visited=new Set(),queue=[...wants];
+ while(queue.length){
+  const id=queue.pop();
+  if(!/^[0-9a-f]{40}$/.test(id)||!objects.has(id))throw Error('Unknown wanted object '+id);
+  if(visited.has(id))continue;
+  visited.add(id);
+  const object=objects.get(id);
+  if(object.type==='commit'){
+   const header=object.data.toString('utf8').split('\n\n',1)[0];
+   for(const line of header.split('\n')){
+    const match=/^(?:tree|parent) ([0-9a-f]{40})$/.exec(line);
+    if(match)queue.push(match[1]);
+   }
+  }else if(object.type==='tag'){
+   const match=/^object ([0-9a-f]{40})$/m.exec(object.data.toString('utf8').split('\n\n',1)[0]);
+   if(match)queue.push(match[1]);
+  }else if(object.type==='tree'){
+   let pos=0;
+   while(pos<object.data.length){
+    const space=object.data.indexOf(32,pos);
+    const nul=object.data.indexOf(0,space+1);
+    if(space<0||nul<0||nul+21>object.data.length)throw Error('Invalid tree object');
+    const mode=object.data.toString('ascii',pos,space);
+    const child=object.data.subarray(nul+1,nul+21).toString('hex');
+    if(mode!=='160000')queue.push(child); // submodules refer to external commits
+    pos=nul+21;
+   }
+  }
+ }
+ return [...visited];
+}
+export function applyRefUpdates(repo,commands,objects){
+ const zero='0'.repeat(40);
+ const updates=[],seen=new Set();
+ for(const line of commands){
+  if(!line)continue;
+  const raw=line.toString('utf8').split('\0')[0].trim();
+  const match=/^([a-f0-9]{40}) ([a-f0-9]{40}) (refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+)$/.exec(raw);
+  if(!match)throw Error('Invalid ref update command');
+  const [,oldId,newId,ref]=match;
+  if(ref.includes('..')||ref.includes('//')||ref.endsWith('/')||ref.endsWith('.')||ref.includes('/.')||ref.includes('.lock')||seen.has(ref))throw Error('Invalid or duplicate ref');
+  seen.add(ref);
+  if((repo.refs.get(ref)||zero)!==oldId)throw Error('Stale reference '+ref);
+  if(newId!==zero&&!objects.has(newId))throw Error('Missing target object '+newId);
+  if(newId!==zero)reachableObjects([newId],objects);
+  updates.push({ref,newId});
+ }
+ for(const {ref,newId} of updates){
+  if(newId===zero)repo.refs.delete(ref);else repo.refs.set(ref,newId);
+ }
+ return updates.map(x=>x.ref);
+}
