@@ -125,10 +125,10 @@ export function discoverRefs(repo,service){
  const caps='report-status report-status-v2 delete-refs ofs-delta side-band-64k agent=git-forge/0.3';
  const rows=[pkt('# service='+service+'\n'),flush()];
  if(!refs.length){
-  rows.push(pkt('0'.repeat(40)+' capabilities^{}\\0'+caps+'\n'));
+  rows.push(pkt('0'.repeat(40)+' capabilities^{}\0'+caps+'\n'));
  }else{
   const [firstName,firstId]=refs[0];
-  rows.push(pkt(firstId+' '+firstName+'\\0'+caps+'\n'));
+  rows.push(pkt(firstId+' '+firstName+'\0'+caps+'\n'));
   for(const [name,id] of refs.slice(1))rows.push(pkt(id+' '+name+'\n'));
   rows.push(pkt((main||firstId)+' HEAD\n'));
  }
