@@ -81,8 +81,8 @@ export function readPack(input,objects){
   }else if(!TYPES[type])throw Error('Unsupported object type '+type);
   const inflated=inflateSync(input.subarray(pos,input.length-20),{info:true,maxOutputLength:64*1024*1024});
   pos+=inflated.engine.bytesWritten;
-  if(inflated.buffer.length!==size)throw Error('Object size mismatch');
-  entries.push({start,type,data:inflated.buffer,baseId,baseOffset});
+  if(TYPES[type]&&inflated.buffer.length!==size)throw Error('Object size mismatch');
+  entries.push({start,type,size,data:inflated.buffer,baseId,baseOffset});
  }
  if(pos!==input.length-20)throw Error('Trailing PACK data');
  const byOffset=new Map();const pending=new Set(entries);
@@ -95,6 +95,7 @@ export function readPack(input,objects){
     const base=entry.type===6?byOffset.get(entry.baseOffset):resolved.get(entry.baseId);
     if(!base)continue;
     object={type:base.type,data:applyDelta(base.data,entry.data)};
+    if(object.data.length!==entry.size)throw Error('Delta result size mismatch');
    }
    if(object.data.length>64*1024*1024)throw Error('Object too large');
    const id=oid(object.type,object.data);
