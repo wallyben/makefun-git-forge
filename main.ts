@@ -104,7 +104,69 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='DELETE'){if(!f)return fail(res,404,'Not Found');const b=await body(req);if(b.sha!==f.sha)return fail(res,409,'SHA mismatch');r.files.delete(name);return json(res,200,{commit:{sha:sha(key+name+'delete')}})}
  }
  }
- if(p==='/api/graphql'&&req.method==='POST'){const b=await body(req);if(typeof b.query!=='string')return fail(res,400,'Query required');return json(res,200,{data:{viewer:{login:owner}}})}
+ if(p==='/api/graphql'&&req.method==='POST'){
+  const b=await body(req);
+  if(typeof b.query!=='string'||!b.query.trim())return fail(res,400,'Query required');
+  const q=b.query,vars=b.variables&&typeof b.variables==='object'?b.variables:{};
+  const errors=[];
+  const data={};
+  const arg=(name)=>{const m=new RegExp(name+'\\s*:\\s*(\\$[A-Za-z_][A-Za-z_0-9]*|"(?:[^"\\\\]|\\\\.)*")').exec(q);if(!m)return undefined;return m[1][0]==='
+ if(p==='/mcp'&&req.method==='POST'){
+  const b=await body(req);
+  if(b.method==='notifications/initialized'){res.writeHead(202);return res.end()}
+  const reply=(result)=>json(res,200,{jsonrpc:'2.0',id:b.id,result});
+  const error=(code,message)=>json(res,200,{jsonrpc:'2.0',id:b.id,error:{code,message}});
+  if(b.jsonrpc!=='2.0'||typeof b.method!=='string')return error(-32600,'Invalid Request');
+  if(b.method==='initialize')return reply({protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'git-forge',version:'0.2.0'}});
+  const tools=[
+   {name:'list_repositories',description:'List repositories owned by the current user',inputSchema:{type:'object',properties:{},additionalProperties:false}},
+   {name:'get_repository',description:'Get a repository by owner and name',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
+   {name:'list_issues',description:'List issues in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
+   {name:'create_issue',description:'Create an issue in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'},title:{type:'string'},body:{type:'string'}},required:['owner','repo','title'],additionalProperties:false}}
+  ];
+  if(b.method==='tools/list')return reply({tools});
+  if(b.method==='ping')return reply({});
+  if(b.method==='tools/call'){
+   const name=b.params?.name,a=b.params?.arguments||{};
+   if(!tools.some(t=>t.name===name))return error(-32602,'Unknown tool');
+   const r=repos.get(a.owner+'/'+a.repo);
+   let value;
+   if(name==='list_repositories')value=[...repos.values()].map(repoObj);
+   else if(!r)return reply({content:[{type:'text',text:'Repository not found'}],isError:true});
+   else if(name==='get_repository')value=repoObj(r);
+   else if(name==='list_issues')value=r.issues.map(i=>issueObj(r,i));
+   else if(name==='create_issue'){
+    if(typeof a.title!=='string'||!a.title.trim())return reply({content:[{type:'text',text:'Issue title required'}],isError:true});
+    const i={id:r.issues.length+1,number:r.issues.length+1,title:a.title,body:typeof a.body==='string'?a.body:'',state:'open',labels:[]};
+    r.issues.push(i);value=issueObj(r,i);
+   }
+   return reply({content:[{type:'text',text:JSON.stringify(value)}]});
+  }
+  return error(-32601,'Method not found');
+ }
+ return fail(res,404,'Not Found');
+ }catch(e){return fail(res,e instanceof SyntaxError?400:500,e instanceof SyntaxError?'Malformed JSON':'Internal error')}
+});
+server.listen(0,'0.0.0.0',async()=>{
+ const port=server.address().port;console.log('Git forge listening on '+port);
+ if(!env)return;
+ try{
+  const register=await fetch(env+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port})});if(!register.ok)throw Error('Registration failed '+register.status);
+  while(true){const r=await fetch(env+'/done');if(r.ok&&(await r.json()).done===true){server.close();process.exit(0)}await new Promise(resolve=>setTimeout(resolve,1000))}
+ }catch(e){console.error(e);process.exitCode=1;server.close()}
+});
+?vars[m[1].slice(1)]:JSON.parse(m[1])};
+  const gqlRepo=r=>({id:String(r.id),name:r.name,nameWithOwner:r.owner+'/'+r.name,description:r.description,isPrivate:false,url:'https://github.com/'+r.owner+'/'+r.name,defaultBranchRef:{name:'main'},issues:{totalCount:r.issues.length,nodes:r.issues.map(i=>({id:String(i.id),number:i.number,title:i.title,body:i.body,state:i.state.toUpperCase()}))},pullRequests:{totalCount:r.pulls.length,nodes:r.pulls}});
+  if(/\\bviewer\\s*(?:\\{|\\()/i.test(q))data.viewer={login:owner,id:'1',repositories:{totalCount:repos.size,nodes:[...repos.values()].map(gqlRepo)}};
+  if(/\\brepository\\s*\\(/.test(q)){
+   const own=arg('owner'),name=arg('name');
+   if(typeof own!=='string'||typeof name!=='string')errors.push({message:'repository requires owner and name'});
+   else data.repository=repos.has(own+'/'+name)?gqlRepo(repos.get(own+'/'+name)):null;
+  }
+  if(/\\brateLimit\\b/.test(q))data.rateLimit={limit:5000,remaining:5000,cost:1};
+  if(!Object.keys(data).length&&!errors.length)errors.push({message:'Unsupported GraphQL operation'});
+  return json(res,200,errors.length?{data:Object.keys(data).length?data:null,errors}:{data});
+ }
  if(p==='/mcp'&&req.method==='POST'){
   const b=await body(req);
   if(b.method==='notifications/initialized'){res.writeHead(202);return res.end()}
