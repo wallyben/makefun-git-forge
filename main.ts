@@ -57,10 +57,18 @@ const server=http.createServer(async(req,res)=>{
    return res.end(result);
   }
   if(route==='git-receive-pack'){
-   const zero=input.indexOf(Buffer.from('0000'));
-   if(zero<0)return fail(res,400,'Missing commands');
-   const commands=packets(input.subarray(0,zero+4));
-   const pack=input.subarray(zero+4);
+   let end=0;
+   while(end+4<=input.length){
+    const header=input.toString('ascii',end,end+4);
+    if(!/^[0-9a-fA-F]{4}$/.test(header))throw Error('Invalid receive-pack packet header');
+    const length=parseInt(header,16);
+    if(length===0){end+=4;break}
+    if(length<4||end+length>input.length)throw Error('Invalid receive-pack command packet');
+    end+=length;
+   }
+   if(end<4||input.toString('ascii',end-4,end)!=='0000')return fail(res,400,'Missing commands');
+   const commands=packets(input.subarray(0,end));
+   const pack=input.subarray(end);
    try{
     const staged=new Map(gr.objects);
     if(pack.length)readPack(pack,staged);
