@@ -43,7 +43,7 @@ const server=http.createServer(async(req,res)=>{
     const objects=reachableObjects(wants,gr.objects);
     const packed=writePack(objects,gr.objects);
     const bands=[];for(let i=0;i<packed.length;i+=65515)bands.push(pkt(Buffer.concat([Buffer.from([1]),packed.subarray(i,i+65515)])));
-    const result=Buffer.concat([pkt('acknowledgments\n'),Buffer.from('0001'),pkt('packfile\n'),...bands,flush()]);
+    const result=Buffer.concat([pkt('packfile\n'),...bands,flush()]);
     res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
     return res.end(result);
    }
