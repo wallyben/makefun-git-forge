@@ -47,7 +47,11 @@ const server=http.createServer(async(req,res)=>{
     return res.end(result);
    }
    const wants=lines.filter(x=>x&&x.toString().startsWith('want ')).map(x=>x.toString().slice(5).trim());
-   const result=Buffer.concat([Buffer.from('0008NAK\n'),writePack(reachableObjects(wants,gr.objects),gr.objects)]);
+   const packed=writePack(reachableObjects(wants,gr.objects),gr.objects);
+   const sideband=lines.some(x=>Buffer.isBuffer(x)&&/side-band(?:-64k)?/.test(x.toString()));
+   const result=sideband
+    ? Buffer.concat([pkt('NAK\n'),...Array.from({length:Math.ceil(packed.length/65515)},(_,i)=>pkt(Buffer.concat([Buffer.from([1]),packed.subarray(i*65515,(i+1)*65515)]))),flush()])
+    : Buffer.concat([pkt('NAK\n'),packed]);
    res.writeHead(200,{'Content-Type':'application/x-git-upload-pack-result'});
    return res.end(result);
   }
