@@ -154,7 +154,8 @@ const server=http.createServer(async(req,res)=>{
    {name:'list_repositories',description:'List repositories owned by the current user',inputSchema:{type:'object',properties:{},additionalProperties:false}},
    {name:'get_repository',description:'Get a repository by owner and name',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
    {name:'list_issues',description:'List issues in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
-   {name:'create_issue',description:'Create an issue in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'},title:{type:'string'},body:{type:'string'}},required:['owner','repo','title'],additionalProperties:false}}
+   {name:'create_issue',description:'Create an issue in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'},title:{type:'string'},body:{type:'string'}},required:['owner','repo','title'],additionalProperties:false}},
+   {name:'update_issue',description:'Update issue title, body or open/closed state',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'},number:{type:'integer',minimum:1},title:{type:'string'},body:{type:'string'},state:{type:'string',enum:['open','closed']}},required:['owner','repo','number'],additionalProperties:false}}
   ];
   if(b.method==='tools/list')return reply({tools});
   if(b.method==='ping')return reply({});
@@ -171,6 +172,17 @@ const server=http.createServer(async(req,res)=>{
     if(typeof a.title!=='string'||!a.title.trim())return reply({content:[{type:'text',text:'Issue title required'}],isError:true});
     const i={id:r.issues.length+1,number:r.issues.length+1,title:a.title,body:typeof a.body==='string'?a.body:'',state:'open',labels:[]};
     r.issues.push(i);value=issueObj(r,i);
+   }
+   else if(name==='update_issue'){
+    const i=Number.isInteger(a.number)&&a.number>0?r.issues.find(x=>x.number===a.number):undefined;
+    if(!i)return reply({content:[{type:'text',text:'Issue not found'}],isError:true});
+    if(a.title!==undefined&&(typeof a.title!=='string'||!a.title.trim()))return reply({content:[{type:'text',text:'Invalid issue title'}],isError:true});
+    if(a.body!==undefined&&typeof a.body!=='string')return reply({content:[{type:'text',text:'Invalid issue body'}],isError:true});
+    if(a.state!==undefined&&!['open','closed'].includes(a.state))return reply({content:[{type:'text',text:'Invalid issue state'}],isError:true});
+    if(a.title!==undefined)i.title=a.title;
+    if(a.body!==undefined)i.body=a.body;
+    if(a.state!==undefined)i.state=a.state;
+    value=issueObj(r,i);
    }
    return reply({content:[{type:'text',text:JSON.stringify(value)}]});
   }
