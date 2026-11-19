@@ -108,7 +108,7 @@ const server=http.createServer(async(req,res)=>{
   const b=await body(req);
   if(typeof b.query!=='string'||!b.query.trim())return fail(res,400,'Query required');
   const q=b.query,vars=b.variables||{},data={};
-  const arg=name=>{const pattern=new RegExp(name+'\\s*:\\s*(\\\\u0024[A-Za-z_][A-Za-z_0-9]*|"[^"]*")');const m=pattern.exec(q);if(!m)return undefined;return m[1].charCodeAt(0)===36?vars[m[1].slice(1)]:JSON.parse(m[1])};
+  const arg=name=>{const pattern=new RegExp(name+'\\s*:\\s*('+String.fromCharCode(92,36)+'[A-Za-z_][A-Za-z_0-9]*|"[^"]*")');const m=pattern.exec(q);if(!m)return undefined;return m[1].charCodeAt(0)===36?vars[m[1].slice(1)]:JSON.parse(m[1])};
   const gqlRepo=r=>({id:String(r.id),name:r.name,nameWithOwner:r.owner+'/'+r.name,description:r.description,isPrivate:false,url:'https://github.com/'+r.owner+'/'+r.name,defaultBranchRef:{name:'main'},issues:{totalCount:r.issues.length,nodes:r.issues.map(i=>({id:String(i.id),number:i.number,title:i.title,body:i.body,state:i.state.toUpperCase()}))},pullRequests:{totalCount:r.pulls.length,nodes:r.pulls}});
   if(/\bviewer\b/.test(q))data.viewer={login:owner,id:'1',repositories:{totalCount:repos.size,nodes:[...repos.values()].map(gqlRepo)}};
   if(/\brepository\s*\(/.test(q)){const own=arg('owner'),name=arg('name');if(typeof own!=='string'||typeof name!=='string')return json(res,200,{data:null,errors:[{message:'repository requires owner and name'}]});data.repository=repos.has(own+'/'+name)?gqlRepo(repos.get(own+'/'+name)):null}
