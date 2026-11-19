@@ -68,7 +68,7 @@ test('reachableObjects includes commit, tree and blob, excluding submodule commi
  const blob=Buffer.from('content');const blobId=oid('blob',blob);objects.set(blobId,{type:'blob',data:blob});
  const tree=Buffer.concat([Buffer.from('100644 file.txt\0'),Buffer.from(blobId,'hex')]);
  const treeId=oid('tree',tree);objects.set(treeId,{type:'tree',data:tree});
- const commit=Buffer.from('tree '+treeId+'\\nauthor Test <test@example.com> 0 +0000\\ncommitter Test <test@example.com> 0 +0000\\n\\nmessage\\n');
+ const commit=Buffer.from(['tree '+treeId,'author Test <test@example.com> 0 +0000','committer Test <test@example.com> 0 +0000','','message',''].join('\n'));
  const commitId=oid('commit',commit);objects.set(commitId,{type:'commit',data:commit});
  assert.deepEqual(new Set(reachableObjects([commitId],objects)),new Set([commitId,treeId,blobId]));
  assert.throws(()=>reachableObjects(['0'.repeat(40)],objects),/Unknown wanted/);
@@ -87,4 +87,15 @@ test('ref updates reject missing objects and stale refs without partially mutati
  assert.equal(repo.refs.get('refs/heads/main'),id);
  assert.throws(()=>applyRefUpdates(repo,[Buffer.from(zero+' '+zero+' refs/heads/main')],objects),/Stale reference/);
  assert.throws(()=>applyRefUpdates(repo,[Buffer.from(id+' '+zero+' refs/heads/../bad')],objects),/Invalid or duplicate/);
+});
+
+test('commit traversal follows parent history and nested tree entries',()=>{
+ const objects=new Map();
+ const add=(type,data)=>{const id=oid(type,data);objects.set(id,{type,data});return id};
+ const file=add('blob',Buffer.from('nested file'));
+ const nested=add('tree',Buffer.concat([Buffer.from('100644 file.txt\\0'),Buffer.from(file,'hex')]));
+ const root=add('tree',Buffer.concat([Buffer.from('40000 sub\\0'),Buffer.from(nested,'hex')]));
+ const parent=add('commit',Buffer.from('tree '+root+'\\nauthor A <a@example.com> 0 +0000\\ncommitter A <a@example.com> 0 +0000\\n\\nparent\\n'));
+ const child=add('commit',Buffer.from('tree '+root+'\\nparent '+parent+'\\nauthor A <a@example.com> 1 +0000\\ncommitter A <a@example.com> 1 +0000\\n\\nchild\\n'));
+ assert.deepEqual(new Set(reachableObjects([child],objects)),new Set([child,parent,root,nested,file]));
 });
