@@ -7,6 +7,7 @@ const repos=new Map();
 const gitRepos=new Map();
 const owner=process.env.MAKEFUN_LOGIN||'agent';
 const sha=x=>createHash('sha1').update(x).digest('hex');
+const gitBlobSha=bytes=>sha(Buffer.concat([Buffer.from('blob '+bytes.length+'\0'),bytes]));
 const json=(res,status,data,headers={})=>{res.writeHead(status,{'Content-Type':'application/json','X-GitHub-Request-Id':randomUUID(),...headers});res.end(status===204?'':JSON.stringify(data))};
 const fail=(res,status,message)=>json(res,status,{message});
 const body=async req=>{let s='';for await(const c of req){s+=c;if(s.length>2e6)throw Error('Body too large')}return s?JSON.parse(s):{}};
@@ -99,12 +100,44 @@ const server=http.createServer(async(req,res)=>{
  const pull=/^pulls\/(\d+)(?:\/(merge))?$/.exec(sub);if(pull){const i=r.pulls.find(x=>x.number===Number(pull[1]));if(!i)return fail(res,404,'Not Found');if(!pull[2]&&req.method==='GET')return json(res,200,i);if(pull[2]&&req.method==='PUT'){if(i.merged)return fail(res,405,'Already merged');i.merged=true;i.state='closed';return json(res,200,{sha:sha(key+i.number),merged:true,message:'Pull Request successfully merged'})}}
  const content=/^contents\/(.+)$/.exec(sub);if(content){const name=decodeURIComponent(content[1]);const f=r.files.get(name);
   if(req.method==='GET'){return f?json(res,200,{name,path:name,sha:f.sha,content:f.content,encoding:'base64',type:'file'}):fail(res,404,'Not Found')}
-  if(req.method==='PUT'){const b=await body(req);if(f&&b.sha!==f.sha)return fail(res,409,'SHA mismatch');if(!f&&b.sha)return fail(res,409,'SHA mismatch');if(typeof b.content!=='string')return fail(res,422,'Content required');const next={content:b.content,sha:sha(Buffer.from(b.content,'base64'))};r.files.set(name,next);return json(res,f?200:201,{content:{name,path:name,sha:next.sha},commit:{sha:sha(key+name+next.sha)}})}
+  if(req.method==='PUT'){const b=await body(req);if(f&&b.sha!==f.sha)return fail(res,409,'SHA mismatch');if(!f&&b.sha)return fail(res,409,'SHA mismatch');if(typeof b.content!=='string')return fail(res,422,'Content required');const next={content:b.content,sha:gitBlobSha(Buffer.from(b.content,'base64'))};r.files.set(name,next);return json(res,f?200:201,{content:{name,path:name,sha:next.sha},commit:{sha:sha(key+name+next.sha)}})}
   if(req.method==='DELETE'){if(!f)return fail(res,404,'Not Found');const b=await body(req);if(b.sha!==f.sha)return fail(res,409,'SHA mismatch');r.files.delete(name);return json(res,200,{commit:{sha:sha(key+name+'delete')}})}
  }
  }
  if(p==='/api/graphql'&&req.method==='POST'){const b=await body(req);if(typeof b.query!=='string')return fail(res,400,'Query required');return json(res,200,{data:{viewer:{login:owner}}})}
- if(p==='/mcp'&&req.method==='POST'){const b=await body(req);if(b.method==='initialize')return json(res,200,{jsonrpc:'2.0',id:b.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'git-forge',version:'0.1.0'}}});if(b.method==='tools/list')return json(res,200,{jsonrpc:'2.0',id:b.id,result:{tools:[]}});return json(res,200,{jsonrpc:'2.0',id:b.id,error:{code:-32601,message:'Method not found'}})}
+ if(p==='/mcp'&&req.method==='POST'){
+  const b=await body(req);
+  if(b.method==='notifications/initialized'){res.writeHead(202);return res.end()}
+  const reply=(result)=>json(res,200,{jsonrpc:'2.0',id:b.id,result});
+  const error=(code,message)=>json(res,200,{jsonrpc:'2.0',id:b.id,error:{code,message}});
+  if(b.jsonrpc!=='2.0'||typeof b.method!=='string')return error(-32600,'Invalid Request');
+  if(b.method==='initialize')return reply({protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'git-forge',version:'0.2.0'}});
+  const tools=[
+   {name:'list_repositories',description:'List repositories owned by the current user',inputSchema:{type:'object',properties:{},additionalProperties:false}},
+   {name:'get_repository',description:'Get a repository by owner and name',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
+   {name:'list_issues',description:'List issues in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'}},required:['owner','repo'],additionalProperties:false}},
+   {name:'create_issue',description:'Create an issue in a repository',inputSchema:{type:'object',properties:{owner:{type:'string'},repo:{type:'string'},title:{type:'string'},body:{type:'string'}},required:['owner','repo','title'],additionalProperties:false}}
+  ];
+  if(b.method==='tools/list')return reply({tools});
+  if(b.method==='ping')return reply({});
+  if(b.method==='tools/call'){
+   const name=b.params?.name,a=b.params?.arguments||{};
+   if(!tools.some(t=>t.name===name))return error(-32602,'Unknown tool');
+   const r=repos.get(a.owner+'/'+a.repo);
+   let value;
+   if(name==='list_repositories')value=[...repos.values()].map(repoObj);
+   else if(!r)return reply({content:[{type:'text',text:'Repository not found'}],isError:true});
+   else if(name==='get_repository')value=repoObj(r);
+   else if(name==='list_issues')value=r.issues.map(i=>issueObj(r,i));
+   else if(name==='create_issue'){
+    if(typeof a.title!=='string'||!a.title.trim())return reply({content:[{type:'text',text:'Issue title required'}],isError:true});
+    const i={id:r.issues.length+1,number:r.issues.length+1,title:a.title,body:typeof a.body==='string'?a.body:'',state:'open',labels:[]};
+    r.issues.push(i);value=issueObj(r,i);
+   }
+   return reply({content:[{type:'text',text:JSON.stringify(value)}]});
+  }
+  return error(-32601,'Method not found');
+ }
  return fail(res,404,'Not Found');
  }catch(e){return fail(res,e instanceof SyntaxError?400:500,e instanceof SyntaxError?'Malformed JSON':'Internal error')}
 });
