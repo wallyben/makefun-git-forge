@@ -137,8 +137,8 @@ const server=http.createServer(async(req,res)=>{
    const issue={...issueObj(r,i),id:String(i.id),state:'OPEN'};
    return json(res,200,{data:{createIssue:{clientMutationId:input.clientMutationId??null,issue}}});
   }
-  if(/\bmutation\b/.test(q)&&/\bupdateIssue\s*\\(/.test(q)){
-   const inlineField=field=>{const match=new RegExp(field+'\\\s*:\\\s*("([^"]*)"|\\\\$([A-Za-z_][A-Za-z_0-9]*))').exec(q);return match?(match[3]?vars[match[3]]:match[2]):undefined};
+   if(/\bmutation\b/.test(q)&&/\bupdateIssue\s*\(/.test(q)){
+   const inlineField=(field)=>{const match=new RegExp(field+'\\s*:\\s*("([^"]*)"|\\$([A-Za-z_][A-Za-z_0-9]*))').exec(q);return match?(match[3]?vars[match[3]]:match[2]):undefined};
    const input=vars.input&&typeof vars.input==='object'?vars.input:{id:inlineField('id'),title:inlineField('title'),body:inlineField('body'),state:inlineField('state'),clientMutationId:inlineField('clientMutationId')};
    const matches=[...repos.values()].flatMap(r=>r.issues.map(i=>({r,i}))).filter(({i})=>String(i.id)===String(input.id));
    if(matches.length!==1)return json(res,200,{data:{updateIssue:null},errors:[{message:'Could not resolve issue ID'}]});
