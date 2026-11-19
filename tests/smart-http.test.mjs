@@ -25,9 +25,9 @@ test('PACK v2 roundtrip for blob, tree and commit objects',()=>{
  assert.throws(()=>readPack(corrupted,new Map()),/checksum/);
 });
 test('protocol v2 advertisement and ls-refs framing',()=>{
- assert.match(advertiseV2().toString(),'version 2');
+ assert.match(advertiseV2().toString(),/version 2/);
  const r={refs:new Map([['refs/heads/main','a'.repeat(40)]])};
- assert.match(lsRefs(r).toString(),'refs/heads/main');
+ assert.match(lsRefs(r).toString(),/refs\/heads\/main/);
 });
 
 test('REF_DELTA resolves against existing objects and preserves atomicity',()=>{
