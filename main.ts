@@ -137,6 +137,20 @@ const server=http.createServer(async(req,res)=>{
    const issue={...issueObj(r,i),id:String(i.id),state:'OPEN'};
    return json(res,200,{data:{createIssue:{clientMutationId:input.clientMutationId??null,issue}}});
   }
+  if(/\\bmutation\\b/.test(q)&&/\\bupdateIssue\\s*\\(/.test(q)){
+   const inlineField=field=>{const match=new RegExp(field+'\\\\s*:\\\\s*("([^"]*)"|\\\\$([A-Za-z_][A-Za-z_0-9]*))').exec(q);return match?(match[3]?vars[match[3]]:match[2]):undefined};
+   const input=vars.input&&typeof vars.input==='object'?vars.input:{id:inlineField('id'),title:inlineField('title'),body:inlineField('body'),state:inlineField('state'),clientMutationId:inlineField('clientMutationId')};
+   const matches=[...repos.values()].flatMap(r=>r.issues.map(i=>({r,i}))).filter(({i})=>String(i.id)===String(input.id));
+   if(matches.length!==1)return json(res,200,{data:{updateIssue:null},errors:[{message:'Could not resolve issue ID'}]});
+   if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()))return json(res,200,{data:{updateIssue:null},errors:[{message:'Invalid issue title'}]});
+   if(input.body!==undefined&&typeof input.body!=='string')return json(res,200,{data:{updateIssue:null},errors:[{message:'Invalid issue body'}]});
+   if(input.state!==undefined&&!['OPEN','CLOSED'].includes(input.state))return json(res,200,{data:{updateIssue:null},errors:[{message:'Invalid issue state'}]});
+   const {r,i}=matches[0];
+   if(input.title!==undefined)i.title=input.title;
+   if(input.body!==undefined)i.body=input.body;
+   if(input.state!==undefined)i.state=input.state.toLowerCase();
+   return json(res,200,{data:{updateIssue:{clientMutationId:input.clientMutationId??null,issue:{...issueObj(r,i),id:String(i.id),state:i.state.toUpperCase()}}}});
+  }
   if(/\bviewer\b/.test(q))data.viewer={login:owner,id:'1',repositories:{totalCount:repos.size,nodes:[...repos.values()].map(gqlRepo)}};
   if(/\brepository\s*\(/.test(q)){const own=arg('owner'),name=arg('name');if(typeof own!=='string'||typeof name!=='string')return json(res,200,{data:null,errors:[{message:'repository requires owner and name'}]});data.repository=repos.has(own+'/'+name)?gqlRepo(repos.get(own+'/'+name)):null}
   if(/\brateLimit\b/.test(q))data.rateLimit={limit:5000,remaining:5000,cost:1};
