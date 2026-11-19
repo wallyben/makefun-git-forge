@@ -75,7 +75,9 @@ const server=http.createServer(async(req,res)=>{
     const updated=applyRefUpdates(gr,commands,staged);
     gr.objects=staged;
     res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});
-    return res.end(Buffer.concat([pkt('unpack ok\n'),...updated.map(ref=>pkt('ok '+ref+'\n')),flush()]));
+    const status=Buffer.concat([pkt('unpack ok\n'),...updated.map(ref=>pkt('ok '+ref+'\n')),flush()]);
+    const sideband=commands.some(x=>Buffer.isBuffer(x)&&/side-band-64k/.test(x.toString()));
+    return res.end(sideband?Buffer.concat([pkt(Buffer.concat([Buffer.from([1]),status])),flush()]):status);
    }catch(error){res.writeHead(200,{'Content-Type':'application/x-git-receive-pack-result'});return res.end(Buffer.concat([pkt('unpack '+error.message+'\n'),flush()]))}
   }
  }
