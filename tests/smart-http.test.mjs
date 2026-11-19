@@ -93,9 +93,9 @@ test('commit traversal follows parent history and nested tree entries',()=>{
  const objects=new Map();
  const add=(type,data)=>{const id=oid(type,data);objects.set(id,{type,data});return id};
  const file=add('blob',Buffer.from('nested file'));
- const nested=add('tree',Buffer.concat([Buffer.from('100644 file.txt\\0'),Buffer.from(file,'hex')]));
- const root=add('tree',Buffer.concat([Buffer.from('40000 sub\\0'),Buffer.from(nested,'hex')]));
- const parent=add('commit',Buffer.from('tree '+root+'\\nauthor A <a@example.com> 0 +0000\\ncommitter A <a@example.com> 0 +0000\\n\\nparent\\n'));
- const child=add('commit',Buffer.from('tree '+root+'\\nparent '+parent+'\\nauthor A <a@example.com> 1 +0000\\ncommitter A <a@example.com> 1 +0000\\n\\nchild\\n'));
+ const nested=add('tree',Buffer.concat([Buffer.from('100644 file.txt\0'),Buffer.from(file,'hex')]));
+ const root=add('tree',Buffer.concat([Buffer.from('40000 sub\0'),Buffer.from(nested,'hex')]));
+ const parent=add('commit',Buffer.from('tree '+root+'\nauthor A <a@example.com> 0 +0000\\ncommitter A <a@example.com> 0 +0000\\n\\nparent\\n'));
+ const child=add('commit',Buffer.from('tree '+root+'\nparent +parent+'\nauthor A <a@example.com> 1 +0000\\ncommitter A <a@example.com> 1 +0000\\n\\nchild\\n'));
  assert.deepEqual(new Set(reachableObjects([child],objects)),new Set([child,parent,root,nested,file]));
 });
