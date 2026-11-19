@@ -123,6 +123,20 @@ const server=http.createServer(async(req,res)=>{
   const q=b.query,vars=b.variables||{},data={};
   const arg=name=>{const pattern=new RegExp(name+'\\s*:\\s*('+String.fromCharCode(92,36)+'[A-Za-z_][A-Za-z_0-9]*|"[^"]*")');const m=pattern.exec(q);if(!m)return undefined;return m[1].charCodeAt(0)===36?vars[m[1].slice(1)]:JSON.parse(m[1])};
   const gqlRepo=r=>({id:String(r.id),name:r.name,nameWithOwner:r.owner+'/'+r.name,description:r.description,isPrivate:false,url:'https://github.com/'+r.owner+'/'+r.name,defaultBranchRef:{name:'main'},issues:{totalCount:r.issues.length,nodes:r.issues.map(i=>({id:String(i.id),number:i.number,title:i.title,body:i.body,state:i.state.toUpperCase()}))},pullRequests:{totalCount:r.pulls.length,nodes:r.pulls}});
+  // GitHub's createIssue mutation uses a repository node ID, not an owner/name pair.
+  // Resolve it against the same in-memory store used by REST and MCP.
+  if(/\bmutation\b/.test(q)&&/\bcreateIssue\s*\(/.test(q)){
+   const inlineField=(field)=>{const match=new RegExp(field+'\\s*:\\s*("([^"]*)"|\\$([A-Za-z_][A-Za-z_0-9]*))').exec(q);return match?(match[3]?vars[match[3]]:match[2]):undefined};
+   const input=vars.input&&typeof vars.input==='object'?vars.input:{repositoryId:inlineField('repositoryId'),title:inlineField('title'),body:inlineField('body'),clientMutationId:inlineField('clientMutationId')};
+   const r=[...repos.values()].find(repo=>String(repo.id)===String(input.repositoryId));
+   if(!r)return json(res,200,{data:{createIssue:null},errors:[{message:'Could not resolve repositoryId'}]});
+   if(typeof input.title!=='string'||!input.title.trim())return json(res,200,{data:{createIssue:null},errors:[{message:'Issue title is required'}]});
+   if(input.body!==undefined&&typeof input.body!=='string')return json(res,200,{data:{createIssue:null},errors:[{message:'Issue body must be a string'}]});
+   const i={id:r.issues.length+1,number:r.issues.length+1,title:input.title,body:input.body||'',state:'open',labels:[]};
+   r.issues.push(i);
+   const issue={...issueObj(r,i),id:String(i.id),state:'OPEN'};
+   return json(res,200,{data:{createIssue:{clientMutationId:input.clientMutationId??null,issue}}});
+  }
   if(/\bviewer\b/.test(q))data.viewer={login:owner,id:'1',repositories:{totalCount:repos.size,nodes:[...repos.values()].map(gqlRepo)}};
   if(/\brepository\s*\(/.test(q)){const own=arg('owner'),name=arg('name');if(typeof own!=='string'||typeof name!=='string')return json(res,200,{data:null,errors:[{message:'repository requires owner and name'}]});data.repository=repos.has(own+'/'+name)?gqlRepo(repos.get(own+'/'+name)):null}
   if(/\brateLimit\b/.test(q))data.rateLimit={limit:5000,remaining:5000,cost:1};
