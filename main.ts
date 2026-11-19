@@ -16,6 +16,8 @@ const issueObj=(r,i)=>({id:i.id,number:i.number,title:i.title,body:i.body,state:
 const server=http.createServer(async(req,res)=>{
  try{
  const url=new URL(req.url,'http://localhost');const p=url.pathname;
+ if(p==='/healthz'&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'});return res.end('ok')}
+
  if(/^\/[^/]+\/[^/]+\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.test(p)){
   const m=/^\/([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(p);
   const key=decodeURIComponent(m[1])+'/'+decodeURIComponent(m[2]);
