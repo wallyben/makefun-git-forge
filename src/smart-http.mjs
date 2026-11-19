@@ -7,6 +7,8 @@ export const pkt = (data) => {
  return Buffer.concat([Buffer.from((bytes.length+4).toString(16).padStart(4,'0')),bytes]);
 };
 export const flush=()=>Buffer.from('0000');
+export const delim=()=>Buffer.from('0001');
+export const responseEnd=()=>Buffer.from('0002');
 export function packets(buffer){
  const out=[];let pos=0;
  while(pos<buffer.length){
@@ -18,6 +20,7 @@ export function packets(buffer){
   pos+=4;
   if(n===0){out.push(null);continue}
   if(n===1){out.push({delimiter:true});continue}
+  if(n===2){out.push({responseEnd:true});continue}
   if(n<4||n>65520||pos+n-4>buffer.length)throw Error('Invalid or truncated packet');
   out.push(buffer.subarray(pos,pos+n-4));pos+=n-4;
  }
