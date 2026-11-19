@@ -99,3 +99,10 @@ test('commit traversal follows parent history and nested tree entries',()=>{
  const child=add('commit',Buffer.from(['tree '+root,'parent '+parent,'author A <a@example.com> 1 +0000','committer A <a@example.com> 1 +0000','','child',''].join('\n')));
  assert.deepEqual(new Set(reachableObjects([child],objects)),new Set([child,parent,root,nested,file]));
 });
+
+test('packet parser rejects incomplete headers and nonhex packet lengths',()=>{
+ assert.throws(()=>packets(Buffer.from('00')),/Truncated packet header/);
+ assert.throws(()=>packets(Buffer.from('00xz')),/Invalid packet length/);
+ assert.throws(()=>packets(Buffer.from('0008ab')),/Invalid or truncated packet/);
+ assert.deepEqual(packets(Buffer.from('0000')),[null]);
+});
