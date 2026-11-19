@@ -9,8 +9,11 @@ export const pkt = (data) => {
 export const flush=()=>Buffer.from('0000');
 export function packets(buffer){
  const out=[];let pos=0;
- while(pos+4<=buffer.length){
-  const n=parseInt(buffer.toString('ascii',pos,pos+4),16);
+ while(pos<buffer.length){
+  if(pos+4>buffer.length)throw Error('Truncated packet header');
+  const header=buffer.toString('ascii',pos,pos+4);
+  if(!/^[0-9a-fA-F]{4}$/.test(header))throw Error('Invalid packet length');
+  const n=parseInt(header,16);
   if(!Number.isFinite(n))throw Error('Invalid packet length');
   pos+=4;
   if(n===0){out.push(null);continue}
