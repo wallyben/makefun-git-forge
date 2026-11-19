@@ -9,7 +9,7 @@ test('GraphQL createIssue mutation shares issue state with REST', async t => {
   let output='';
   const timeout=setTimeout(()=>reject(new Error('Startup timeout: '+output)),10000);
   child.once('exit',code=>{clearTimeout(timeout);reject(new Error('Exited '+code+' '+output))});
-  child.stdout.on('data',chunk=>{output+=chunk.toString();const m=/Git forge listening on (\\d+)/.exec(output);if(m){clearTimeout(timeout);resolve(Number(m[1]))}});
+  child.stdout.on('data',chunk=>{output+=chunk.toString();const m=/Git forge listening on (\d+)/.exec(output);if(m){clearTimeout(timeout);resolve(Number(m[1]))}});
  });
  const api=async(path,payload)=>{
   const res=await fetch('http://127.0.0.1:'+port+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
