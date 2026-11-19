@@ -15,7 +15,7 @@ export function packets(buffer){
   pos+=4;
   if(n===0){out.push(null);continue}
   if(n===1){out.push({delimiter:true});continue}
-  if(n<4||pos+n-4>buffer.length)throw Error('Truncated packet');
+  if(n<4||n>65520||pos+n-4>buffer.length)throw Error('Invalid or truncated packet');
   out.push(buffer.subarray(pos,pos+n-4));pos+=n-4;
  }
  return out;
@@ -56,6 +56,7 @@ export function readPack(input,objects){
  if(input.length<32||input.toString('ascii',0,4)!=='PACK')throw Error('Missing PACK header');
  if(input.readUInt32BE(4)!==2&&input.readUInt32BE(4)!==3)throw Error('Unsupported PACK version');
  const count=input.readUInt32BE(8);
+ if(count>100000)throw Error('PACK object count exceeds limit');
  const checksum=createHash('sha1').update(input.subarray(0,input.length-20)).digest();
  if(!checksum.equals(input.subarray(input.length-20)))throw Error('Invalid PACK checksum');
  let pos=12;const entries=[],resolved=new Map(objects);
@@ -78,7 +79,7 @@ export function readPack(input,objects){
    if(pos+20>input.length-20)throw Error('Truncated REF_DELTA base');
    baseId=input.subarray(pos,pos+20).toString('hex');pos+=20;
   }else if(!TYPES[type])throw Error('Unsupported object type '+type);
-  const inflated=inflateSync(input.subarray(pos,input.length-20),{info:true});
+  const inflated=inflateSync(input.subarray(pos,input.length-20),{info:true,maxOutputLength:64*1024*1024});
   pos+=inflated.engine.bytesWritten;
   if(inflated.buffer.length!==size)throw Error('Object size mismatch');
   entries.push({start,type,data:inflated.buffer,baseId,baseOffset});
@@ -95,6 +96,7 @@ export function readPack(input,objects){
     if(!base)continue;
     object={type:base.type,data:applyDelta(base.data,entry.data)};
    }
+   if(object.data.length>64*1024*1024)throw Error('Object too large');
    const id=oid(object.type,object.data);
    entry.id=id;entry.object=object;resolved.set(id,object);byOffset.set(entry.start,object);
    pending.delete(entry);progressed=true;
@@ -122,7 +124,7 @@ export function writePack(ids,objects){
 export function discoverRefs(repo,service){
  const main=repo.refs.get('refs/heads/main');
  const refs=[...repo.refs].sort(([a],[b])=>a.localeCompare(b));
- const caps='report-status report-status-v2 delete-refs ofs-delta side-band-64k agent=git-forge/0.3';
+ const caps='report-status report-status-v2 delete-refs ofs-delta side-band side-band-64k agent=git-forge/0.4'+(main?' symref=HEAD:refs/heads/main':'');
  const rows=[pkt('# service='+service+'\n'),flush()];
  if(!refs.length){
   rows.push(pkt('0'.repeat(40)+' capabilities^{}\0'+caps+'\n'));
