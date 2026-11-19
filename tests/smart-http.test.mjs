@@ -66,7 +66,7 @@ test('OFS_DELTA resolves a preceding base object in the same pack',()=>{
 test('reachableObjects includes commit, tree and blob, excluding submodule commits',()=>{
  const objects=new Map();
  const blob=Buffer.from('content');const blobId=oid('blob',blob);objects.set(blobId,{type:'blob',data:blob});
- const tree=Buffer.concat([Buffer.from('100644 file.txt\\0'),Buffer.from(blobId,'hex')]);
+ const tree=Buffer.concat([Buffer.from('100644 file.txt\0'),Buffer.from(blobId,'hex')]);
  const treeId=oid('tree',tree);objects.set(treeId,{type:'tree',data:tree});
  const commit=Buffer.from('tree '+treeId+'\\nauthor Test <test@example.com> 0 +0000\\ncommitter Test <test@example.com> 0 +0000\\n\\nmessage\\n');
  const commitId=oid('commit',commit);objects.set(commitId,{type:'commit',data:commit});
