@@ -2,7 +2,7 @@ import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import assert from 'node:assert/strict';
-import {oid,pkt,flush,packets,readPack,writePack,advertiseV2,lsRefs,reachableObjects,applyRefUpdates} from '../src/smart-http.mjs';
+import {oid,pkt,flush,delim,responseEnd,packets,readPack,writePack,advertiseV2,lsRefs,reachableObjects,applyRefUpdates} from '../src/smart-http.mjs';
 test('packet framing and flush roundtrip',()=>{
  const data=Buffer.concat([pkt('hello\n'),flush(),pkt('world\n')]);
  assert.deepEqual(packets(data).map(x=>x===null?null:x.toString()),['hello\n',null,'world\n']);
@@ -105,4 +105,17 @@ test('packet parser rejects incomplete headers and nonhex packet lengths',()=>{
  assert.throws(()=>packets(Buffer.from('00xz')),/Invalid packet length/);
  assert.throws(()=>packets(Buffer.from('0008ab')),/Invalid or truncated packet/);
  assert.deepEqual(packets(Buffer.from('0000')),[null]);
+});
+
+test('Git protocol v2 recognizes all three control packets',()=>{
+ const wire=Buffer.concat([pkt('command=ls-refs\n'),delim(),pkt('symrefs\n'),flush(),responseEnd()]);
+ const decoded=packets(wire);
+ assert.equal(decoded[0].toString(),'command=ls-refs\n');
+ assert.deepEqual(decoded[1],{delimiter:true});
+ assert.equal(decoded[2].toString(),'symrefs\n');
+ assert.equal(decoded[3],null);
+ assert.deepEqual(decoded[4],{responseEnd:true});
+ assert.equal(delim().toString(),'0001');
+ assert.equal(responseEnd().toString(),'0002');
+ assert.throws(()=>packets(Buffer.from('0003')),/Invalid or truncated packet/);
 });
