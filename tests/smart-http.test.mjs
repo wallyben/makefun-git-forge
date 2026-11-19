@@ -34,7 +34,7 @@ test('REF_DELTA resolves against existing objects and preserves atomicity',()=>{
  const base=Buffer.from('hello world');const baseId=oid('blob',base);
  const delta=Buffer.from([11,12,0x90,6,6,...Buffer.from('planet')]);
  const compressed=deflateSync(delta);
- const header=Buffer.from([0x70|delta.length]);
+ const header=Buffer.from([0x70|12]);
  const prefix=Buffer.alloc(12);prefix.write('PACK');prefix.writeUInt32BE(2,4);prefix.writeUInt32BE(1,8);
  const payload=Buffer.concat([prefix,header,Buffer.from(baseId,'hex'),compressed]);
  const pack=Buffer.concat([payload,createHash('sha1').update(payload).digest()]);
@@ -53,7 +53,7 @@ test('OFS_DELTA resolves a preceding base object in the same pack',()=>{
  const deltaStart=12+baseBody.length;
  const distance=deltaStart-12;
  assert.ok(distance<128);
- const deltaBody=Buffer.concat([Buffer.from([0x60|delta.length,distance]),deflateSync(delta)]);
+ const deltaBody=Buffer.concat([Buffer.from([0x60|12,distance]),deflateSync(delta)]);
  const prefix=Buffer.alloc(12);prefix.write('PACK');prefix.writeUInt32BE(2,4);prefix.writeUInt32BE(2,8);
  const payload=Buffer.concat([prefix,baseBody,deltaBody]);
  const pack=Buffer.concat([payload,createHash('sha1').update(payload).digest()]);
