@@ -128,7 +128,7 @@ const server=http.createServer(async(req,res)=>{
    seen.add(id);
    const object=gr.objects.get(id);
    if(!object||object.type!=='commit')return fail(res,422,'Invalid commit graph');
-   for(const line of object.data.toString('utf8').split('\\n\\n',1)[0].split('\\n')){
+   for(const line of object.data.toString('utf8').split('\n\n',1)[0].split('\n')){
     const match=/^parent ([0-9a-f]{40})$/.exec(line);
     if(match)pending.push(match[1]);
    }
