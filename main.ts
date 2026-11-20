@@ -112,7 +112,32 @@ const server=http.createServer(async(req,res)=>{
  const issue=/^issues\/(\d+)$/.exec(sub);if(issue){const i=r.issues.find(x=>x.number===Number(issue[1]));if(!i)return fail(res,404,'Not Found');if(req.method==='GET')return json(res,200,issueObj(r,i));if(req.method==='PATCH'){const b=await body(req);if(b.title!==undefined&&(typeof b.title!=='string'||!b.title.trim()))return fail(res,422,'Invalid title');if(b.body!==undefined&&typeof b.body!=='string')return fail(res,422,'Invalid body');if(b.state!==undefined&&!['open','closed'].includes(b.state))return fail(res,422,'Invalid state');if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;if(b.state!==undefined)i.state=b.state;return json(res,200,issueObj(r,i))}}
  if(sub==='pulls'&&req.method==='GET')return json(res,200,r.pulls);
  if(sub==='pulls'&&req.method==='POST'){const b=await body(req);const i={number:r.pulls.length+1,title:b.title||'',head:b.head||'',base:b.base||'main',state:'open',merged:false};r.pulls.push(i);return json(res,201,i)}
- const pull=/^pulls\/(\d+)(?:\/(merge))?$/.exec(sub);if(pull){const i=r.pulls.find(x=>x.number===Number(pull[1]));if(!i)return fail(res,404,'Not Found');if(!pull[2]&&req.method==='GET')return json(res,200,i);if(pull[2]&&req.method==='PUT'){if(i.merged)return fail(res,405,'Already merged');i.merged=true;i.state='closed';return json(res,200,{sha:sha(key+i.number),merged:true,message:'Pull Request successfully merged'})}}
+ const pull=/^pulls\/(\d+)(?:\/(merge))?$/.exec(sub);if(pull){const i=r.pulls.find(x=>x.number===Number(pull[1]));if(!i)return fail(res,404,'Not Found');if(!pull[2]&&req.method==='GET')return json(res,200,i);if(pull[2]&&req.method==='PUT'){
+  if(i.merged)return fail(res,405,'Already merged');
+  const gr=gitRepos.get(key),headRef='refs/heads/'+i.head,baseRef='refs/heads/'+i.base;
+  const head=gr?.refs.get(headRef),base=gr?.refs.get(baseRef);
+  if(!head||!base)return fail(res,422,'Head or base branch not found');
+  // Only claim a merge when the target ref can actually be advanced safely.
+  // A divergent history requires a real merge commit; never manufacture a SHA.
+  const seen=new Set(),pending=[head];
+  let ancestor=false;
+  while(pending.length){
+   const id=pending.pop();
+   if(id===base){ancestor=true;break}
+   if(seen.has(id))continue;
+   seen.add(id);
+   const object=gr.objects.get(id);
+   if(!object||object.type!=='commit')return fail(res,422,'Invalid commit graph');
+   for(const line of object.data.toString('utf8').split('\\n\\n',1)[0].split('\\n')){
+    const match=/^parent ([0-9a-f]{40})$/.exec(line);
+    if(match)pending.push(match[1]);
+   }
+  }
+  if(!ancestor)return fail(res,409,'Non-fast-forward merge requires a merge commit');
+  gr.refs.set(baseRef,head);
+  i.merged=true;i.state='closed';
+  return json(res,200,{sha:head,merged:true,message:'Pull Request successfully fast-forward merged'});
+ }}
  const content=/^contents\/(.+)$/.exec(sub);if(content){const name=decodeURIComponent(content[1]);const f=r.files.get(name);
   if(req.method==='GET'){return f?json(res,200,{name,path:name,sha:f.sha,content:f.content,encoding:'base64',type:'file'}):fail(res,404,'Not Found')}
   if(req.method==='PUT'){const b=await body(req);if(f&&b.sha!==f.sha)return fail(res,409,'SHA mismatch');if(!f&&b.sha)return fail(res,409,'SHA mismatch');if(typeof b.content!=='string')return fail(res,422,'Content required');const next={content:b.content,sha:gitBlobSha(Buffer.from(b.content,'base64'))};r.files.set(name,next);return json(res,f?200:201,{content:{name,path:name,sha:next.sha},commit:{sha:sha(key+name+next.sha)}})}
